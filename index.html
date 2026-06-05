@@ -261,6 +261,11 @@
               <div id="qrcode" class="p-3 bg-white rounded-xl shadow-lg"></div>
               <p class="text-[11px] text-textMuted mt-4 uppercase tracking-widest font-semibold">Scan to join</p>
             </div>
+
+            <!-- Share Link Button -->
+            <button id="btn-share-link" onclick="shareLink()" class="hidden mt-6 flex items-center justify-center gap-2 bg-[#111] hover:bg-[#222] text-white border border-border text-xs font-semibold py-2.5 px-5 rounded-full transition-all z-10 shadow-lg active:scale-95">
+              <i class="ph ph-share-network text-lg"></i> Share Link
+            </button>
           </div>
 
           <!-- Server Native Media Player (Only visible if File is streamed) -->
@@ -445,6 +450,7 @@
       settingRaw: document.getElementById('setting-raw'),
       qrContainer: document.getElementById('qr-container'),
       qrcode: document.getElementById('qrcode'),
+      btnShareLink: document.getElementById('btn-share-link'),
       
       playerSetup: document.getElementById('player-setup'),
       playerActive: document.getElementById('player-active'),
@@ -699,35 +705,35 @@
       document.body.removeChild(textArea);
     }
 
-    function toggleSettings() {
-      if (el.advancedSettings.classList.contains('hidden')) {
-        el.advancedSettings.classList.remove('hidden');
-        el.settingsChevron.classList.add('rotate-180');
+    function shareLink() {
+      if (!serverId) return;
+      const joinUrl = window.location.origin + window.location.pathname + '?id=' + serverId;
+      const originalHtml = el.btnShareLink.innerHTML;
+
+      if (navigator.share) {
+        navigator.share({
+          title: 'WebAudioRelay',
+          text: 'Tune into my live audio stream on WebAudioRelay!',
+          url: joinUrl
+        }).catch((err) => console.error('Error sharing:', err));
       } else {
-        el.advancedSettings.classList.add('hidden');
-        el.settingsChevron.classList.remove('rotate-180');
+        // Fallback: Copy to clipboard if native share isn't supported (e.g., Desktop Chrome)
+        const textArea = document.createElement("textarea");
+        textArea.value = joinUrl;
+        document.body.appendChild(textArea);
+        textArea.select();
+        try {
+          document.execCommand('copy');
+          el.btnShareLink.innerHTML = '<i class="ph ph-check text-green-500 text-lg"></i> Copied Link!';
+          setTimeout(() => { el.btnShareLink.innerHTML = originalHtml; }, 2500);
+        } catch (err) {
+          console.error('Failed to copy link', err);
+        }
+        document.body.removeChild(textArea);
       }
     }
 
-    function toggleRawMode() {
-      const isRaw = el.settingRaw.checked;
-      el.settingEcho.disabled = isRaw;
-      el.settingNoise.disabled = isRaw;
-      el.settingGain.disabled = isRaw;
-      
-      if (isRaw) {
-        el.settingEcho.parentElement.classList.add('opacity-40', 'pointer-events-none');
-        el.settingNoise.parentElement.classList.add('opacity-40', 'pointer-events-none');
-        el.settingGain.parentElement.classList.add('opacity-40', 'pointer-events-none');
-      } else {
-        el.settingEcho.parentElement.classList.remove('opacity-40', 'pointer-events-none');
-        el.settingNoise.parentElement.classList.remove('opacity-40', 'pointer-events-none');
-        el.settingGain.parentElement.classList.remove('opacity-40', 'pointer-events-none');
-      }
-    }
-
-    function toggleFullscreen() {
-      const wrapper = el.videoWrapper;
+    function updateConnectionCount() {
       const video = el.remoteMedia;
       
       if (!document.fullscreenElement && !document.webkitFullscreenElement) {
@@ -903,6 +909,8 @@
           });
           el.qrContainer.classList.remove('hidden');
           el.qrContainer.classList.add('flex');
+          
+          el.btnShareLink.classList.remove('hidden');
         });
 
         peer.on('call', (call) => {
@@ -972,6 +980,7 @@
       el.serverActive.classList.add('hidden');
       el.btnStartServer.innerHTML = 'Start Transmission';
       el.btnStartServer.disabled = false;
+      el.btnShareLink.classList.add('hidden');
       stopVisualizer('server');
     }
 
