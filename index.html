@@ -147,7 +147,7 @@
         
         <div class="text-center mb-10">
           <h2 class="text-3xl font-semibold tracking-tight text-white mb-2">Broadcast</h2>
-          <p class="text-sm text-textMuted">Transmit zero-latency audio across devices.</p>
+          <p class="text-sm text-textMuted">Transmit zero-latency media across devices.</p>
         </div>
 
         <!-- Server Setup -->
@@ -169,6 +169,15 @@
               <span>Select "Entire Screen" and check <b>Share audio</b>.</span>
             </p>
           </div>
+
+          <!-- Video Toggle -->
+          <label class="flex items-center justify-between cursor-pointer p-5 border border-border rounded-2xl bg-surface hover:bg-surfaceHover transition-colors">
+            <span class="flex flex-col">
+              <span class="text-white font-medium text-sm">Include Video</span>
+              <span class="text-xs text-textMuted mt-1">Share camera or screen visually</span>
+            </span>
+            <input type="checkbox" id="setting-video" class="w-5 h-5 cursor-pointer" />
+          </label>
 
           <!-- Advanced Audio Settings -->
           <div class="border border-border rounded-2xl overflow-hidden bg-surface transition-all">
@@ -269,10 +278,15 @@
 
         <!-- Player Active -->
         <div id="player-active" class="space-y-8 hidden">
-          <div class="text-center flex flex-col items-center">
+          <div class="text-center flex flex-col items-center w-full">
             <p class="text-xs text-textMuted mb-2 uppercase tracking-widest font-semibold">Tuned into</p>
             <code id="connected-id-display" class="text-2xl font-mono text-white mb-8">...</code>
             
+            <!-- Video Container (Hidden if audio only) -->
+            <div id="video-wrapper" class="hidden mb-6 w-full rounded-2xl overflow-hidden border border-border shadow-2xl bg-black relative">
+              <video id="remote-media" autoplay playsinline class="w-full h-auto max-h-[40vh] object-contain"></video>
+            </div>
+
             <!-- Player Visualizer -->
             <div class="flex items-end justify-center gap-1.5 h-16 w-full mb-6">
               <div class="eq-bar h-2 player-eq"></div>
@@ -302,8 +316,7 @@
           </button>
         </div>
 
-        <!-- Hidden Audio Elements -->
-        <audio id="remote-audio" autoplay playsinline></audio>
+        <!-- Dummy silent audio to force OS media controls to appear on mobile -->
         <audio id="dummy-audio" loop playsinline src="https://raw.githubusercontent.com/anars/blank-audio/master/10-minutes-of-silence.mp3"></audio>
       </div>
 
@@ -349,6 +362,7 @@
       copyIcon: document.getElementById('copy-icon'),
       serverEqs: document.querySelectorAll('.server-eq'),
       
+      settingVideo: document.getElementById('setting-video'),
       advancedSettings: document.getElementById('advanced-settings'),
       settingsChevron: document.getElementById('settings-chevron'),
       settingEcho: document.getElementById('setting-echo'),
@@ -367,7 +381,8 @@
       playerStatusText: document.getElementById('player-status-text'),
       btnForcePlay: document.getElementById('btn-force-play'),
       playerEqs: document.querySelectorAll('.player-eq'),
-      remoteAudio: document.getElementById('remote-audio'),
+      remoteMedia: document.getElementById('remote-media'),
+      videoWrapper: document.getElementById('video-wrapper'),
       dummyAudio: document.getElementById('dummy-audio'),
       volumeSlider: document.getElementById('volume-slider')
     };
@@ -392,10 +407,16 @@
           audioCtx.resume();
         }
 
+        // Must extract audio track specifically if dealing with mixed streams
+        const audioTracks = stream.getAudioTracks();
+        if (audioTracks.length === 0) return;
+        
+        const audioOnlyStream = new MediaStream([audioTracks[0]]);
+
         analyser = audioCtx.createAnalyser();
         analyser.fftSize = 64; 
         
-        visualizerSource = audioCtx.createMediaStreamSource(stream);
+        visualizerSource = audioCtx.createMediaStreamSource(audioOnlyStream);
         visualizerSource.connect(analyser);
         
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
@@ -470,7 +491,7 @@
       });
 
       el.volumeSlider.addEventListener('input', (e) => {
-        el.remoteAudio.volume = parseFloat(e.target.value);
+        el.remoteMedia.volume = parseFloat(e.target.value);
       });
       
       el.targetServerId.dispatchEvent(new Event('input'));
@@ -575,6 +596,7 @@
       el.btnStartServer.disabled = true;
 
       const isRaw = el.settingRaw.checked;
+      const includeVideo = el.settingVideo.checked;
       let audioConstraints = {
         echoCancellation: isRaw ? false : el.settingEcho.checked,
         noiseSuppression: isRaw ? false : el.settingNoise.checked,
@@ -586,18 +608,26 @@
       try {
         if (audioSource === 'system') {
           originalStream = await navigator.mediaDevices.getDisplayMedia({ 
-            video: true, 
+            video: true, // Display media requires requesting video natively
             audio: audioConstraints 
           });
           
           const audioTracks = originalStream.getAudioTracks();
           if (audioTracks.length === 0) {
             originalStream.getTracks().forEach(t => t.stop());
-            throw new Error('No audio track found. Please share audio.');
+            throw new Error('No audio track found. Please ensure "Share audio" is selected.');
           }
-          transmissionStream = new MediaStream([audioTracks[0]]);
+
+          if (includeVideo) {
+            transmissionStream = originalStream;
+          } else {
+            // Strip video track for audio-only transmission
+            transmissionStream = new MediaStream([audioTracks[0]]);
+          }
+
         } else {
           originalStream = await navigator.mediaDevices.getUserMedia({ 
+            video: includeVideo,
             audio: audioConstraints 
           });
           transmissionStream = originalStream;
@@ -668,7 +698,7 @@
         }
 
       } catch (err) {
-        alert(err.message || 'Failed to capture audio.');
+        alert(err.message || 'Failed to capture media.');
         el.btnStartServer.innerHTML = 'Start Transmission';
         el.btnStartServer.disabled = false;
       }
@@ -715,7 +745,7 @@
     function setupMediaSession() {
       if ('mediaSession' in navigator) {
         navigator.mediaSession.metadata = new MediaMetadata({
-          title: 'Live Audio Stream',
+          title: 'Live Stream',
           artist: 'WebAudioRelay',
           artwork: [
             { src: 'https://dummyimage.com/512x512/000000/ffffff.png&text=A', sizes: '512x512', type: 'image/png' }
@@ -735,12 +765,13 @@
       el.btnConnect.innerHTML = '<i class="ph ph-spinner-gap animate-spin text-lg"></i> Connecting...';
       el.btnConnect.disabled = true;
       el.btnForcePlay.classList.add('hidden');
+      el.videoWrapper.classList.add('hidden');
 
       localStorage.setItem('webAudioRelay_lastId', targetId);
 
       el.dummyAudio.play().catch(()=>{});
-      el.remoteAudio.play().catch(()=>{});
-      el.remoteAudio.muted = false;
+      el.remoteMedia.play().catch(()=>{});
+      el.remoteMedia.muted = false;
       
       setupMediaSession();
       requestWakeLock();
@@ -771,11 +802,17 @@
         const call = peer.call(targetId, dummyStream);
         
         call.on('stream', (remoteStream) => {
-          el.remoteAudio.srcObject = remoteStream;
+          el.remoteMedia.srcObject = remoteStream;
           
-          el.remoteAudio.play()
+          if (remoteStream.getVideoTracks().length > 0) {
+            el.videoWrapper.classList.remove('hidden');
+            el.playerStatusText.innerText = "Receiving audio and video";
+          } else {
+            el.playerStatusText.innerText = "Receiving clean audio";
+          }
+          
+          el.remoteMedia.play()
             .then(() => {
-              el.playerStatusText.innerText = "Receiving clean audio";
               startVisualizer(remoteStream, 'player');
               el.btnForcePlay.classList.add('hidden');
             })
@@ -798,12 +835,18 @@
     }
 
     function forcePlay() {
-      if (el.remoteAudio.srcObject) {
-        el.remoteAudio.play()
+      if (el.remoteMedia.srcObject) {
+        el.remoteMedia.play()
           .then(() => {
             el.dummyAudio.play().catch(() => {}); 
-            el.playerStatusText.innerText = "Receiving clean audio";
-            if (el.remoteAudio.srcObject) startVisualizer(el.remoteAudio.srcObject, 'player');
+            
+            if (el.remoteMedia.srcObject.getVideoTracks().length > 0) {
+              el.playerStatusText.innerText = "Receiving audio and video";
+            } else {
+              el.playerStatusText.innerText = "Receiving clean audio";
+            }
+
+            if (el.remoteMedia.srcObject) startVisualizer(el.remoteMedia.srcObject, 'player');
             el.btnForcePlay.classList.add('hidden');
           })
           .catch(() => {});
@@ -813,13 +856,14 @@
     }
 
     function stopPlayer() {
-      if (el.remoteAudio.srcObject) {
-        el.remoteAudio.pause();
-        el.remoteAudio.srcObject = null;
+      if (el.remoteMedia.srcObject) {
+        el.remoteMedia.pause();
+        el.remoteMedia.srcObject = null;
       }
       
       el.dummyAudio.pause();
       el.dummyAudio.currentTime = 0;
+      el.videoWrapper.classList.add('hidden');
 
       if (peer) {
         peer.destroy();
