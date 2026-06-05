@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebAudioRelay</title>
+  
+  <!-- Inter Font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Phosphor Icons -->
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  
+  <!-- PeerJS & QRCode -->
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'sans-serif'] },
+          colors: { 
+            surface: '#0a0a0a',
+            surfaceHover: '#141414',
+            border: '#222222',
+            textMuted: '#888888'
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    body {
+      background-color: #000000;
+      color: #ffffff;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* Custom Range Slider */
+    input[type=range] {
+      -webkit-appearance: none;
+      background: transparent;
+      width: 100%;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      height: 16px;
+      width: 16px;
+      border-radius: 50%;
+      background: #ffffff;
+      cursor: pointer;
+      margin-top: -6px;
+      box-shadow: 0 0 10px rgba(255,255,255,0.2);
+    }
+    input[type=range]::-webkit-slider-runnable-track {
+      width: 100%;
+      height: 4px;
+      cursor: pointer;
+      background: #333;
+      border-radius: 2px;
+    }
+
+    /* Custom Checkbox */
+    input[type=checkbox] {
+      appearance: none;
+      background-color: transparent;
+      margin: 0;
+      font: inherit;
+      color: currentColor;
+      width: 1.15em;
+      height: 1.15em;
+      border: 1px solid #444;
+      border-radius: 0.25em;
+      display: grid;
+      place-content: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    input[type=checkbox]::before {
+      content: "";
+      width: 0.65em;
+      height: 0.65em;
+      transform: scale(0);
+      transition: 120ms transform ease-in-out;
+      box-shadow: inset 1em 1em white;
+      background-color: white;
+      transform-origin: center;
+      clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+    }
+    input[type=checkbox]:checked { border-color: white; }
+    input[type=checkbox]:checked::before { transform: scale(1); }
+
+    /* Visualizer Animation */
+    .eq-bar { 
+      transform-origin: bottom;
+      transition: height 0.05s ease;
+      width: 4px;
+      border-radius: 2px;
+      background: #ffffff;
+      box-shadow: 0 0 8px rgba(255,255,255,0.4);
+    }
+    
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body class="min-h-screen selection:bg-white selection:text-black pb-12">
+
+  <!-- Header -->
+  <header class="py-6 px-4 flex justify-center w-full relative z-10">
+    <div class="flex items-center gap-2.5 px-4 py-1.5 rounded-full border border-border bg-surface/50 backdrop-blur-md shadow-2xl">
+      <div class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_#22c55e]"></div>
+      <h1 class="text-xs font-semibold tracking-widest text-textMuted uppercase">Audio<span class="text-white">Relay</span></h1>
+    </div>
+  </header>
+
+  <main class="max-w-xl mx-auto mt-4 px-4 relative z-10">
+    
+    <!-- Loading State -->
+    <div id="loading-view" class="text-center py-20 text-textMuted flex flex-col items-center justify-center">
+      <i class="ph ph-circle-notch animate-spin text-3xl mb-4 text-white"></i>
+      <p class="text-sm tracking-wide">Initializing Core Audio...</p>
+    </div>
+
+    <!-- Main App Container -->
+    <div id="main-app" class="hidden">
+      
+      <!-- Mode Selector -->
+      <div class="flex bg-surface border border-border p-1 rounded-full mb-10 w-full max-w-xs mx-auto shadow-2xl">
+        <button id="tab-server" onclick="setMode('server')" class="flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-full font-medium transition-all bg-[#222] text-white shadow-sm text-sm">
+          Server
+        </button>
+        <button id="tab-player" onclick="setMode('player')" class="flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-full font-medium transition-all text-textMuted hover:text-white text-sm">
+          Player
+        </button>
+      </div>
+
+      <!-- ================= SERVER VIEW ================= -->
+      <div id="server-container" class="block animate-in fade-in slide-in-from-bottom-4 duration-500">
+        
+        <div class="text-center mb-10">
+          <h2 class="text-3xl font-semibold tracking-tight text-white mb-2">Broadcast</h2>
+          <p class="text-sm text-textMuted">Transmit zero-latency audio across devices.</p>
+        </div>
+
+        <!-- Server Setup -->
+        <div id="server-setup" class="space-y-6 block">
+          <div>
+            <div class="grid grid-cols-2 gap-4">
+              <button id="btn-source-mic" onclick="setAudioSource('mic')" class="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl border transition-all border-white bg-[#111] text-white shadow-[0_0_20px_rgba(255,255,255,0.05)]">
+                <i class="ph ph-microphone-stage text-2xl"></i>
+                <span class="text-sm font-medium">Microphone</span>
+              </button>
+              <button id="btn-source-system" onclick="setAudioSource('system')" class="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl border transition-all border-border bg-transparent text-textMuted hover:border-[#444] hover:text-gray-300">
+                <i class="ph ph-speaker-hifi text-2xl"></i>
+                <span class="text-sm font-medium">System Audio</span>
+              </button>
+            </div>
+            
+            <p id="system-audio-warning" class="text-xs text-yellow-500/90 mt-4 hidden items-center gap-2 justify-center">
+              <i class="ph-fill ph-warning-circle text-base"></i>
+              <span>Select "Entire Screen" and check <b>Share audio</b>.</span>
+            </p>
+          </div>
+
+          <!-- Advanced Audio Settings -->
+          <div class="border border-border rounded-2xl overflow-hidden bg-surface transition-all">
+            <button id="btn-toggle-settings" onclick="toggleSettings()" class="w-full flex items-center justify-between p-4 text-textMuted hover:text-white transition-colors">
+              <span class="flex items-center gap-2 font-medium text-sm"><i class="ph ph-sliders-horizontal"></i> Audio Parameters</span>
+              <i id="settings-chevron" class="ph ph-caret-down transition-transform"></i>
+            </button>
+            <div id="advanced-settings" class="hidden p-5 bg-[#050505] space-y-5 border-t border-border text-sm">
+              <label class="flex items-center justify-between cursor-pointer group">
+                <span class="text-gray-400 group-hover:text-white transition-colors">Echo Cancellation</span>
+                <input type="checkbox" id="setting-echo" checked />
+              </label>
+              <label class="flex items-center justify-between cursor-pointer group">
+                <span class="text-gray-400 group-hover:text-white transition-colors">Noise Suppression</span>
+                <input type="checkbox" id="setting-noise" checked />
+              </label>
+              <label class="flex items-center justify-between cursor-pointer group">
+                <span class="text-gray-400 group-hover:text-white transition-colors">Auto Gain Control</span>
+                <input type="checkbox" id="setting-gain" checked />
+              </label>
+              <div class="pt-4 border-t border-border">
+                <label class="flex items-center justify-between cursor-pointer group">
+                  <div class="flex flex-col">
+                    <span class="text-white font-medium">Studio Fidelity</span>
+                    <span class="text-xs text-textMuted mt-0.5">Disables filters for raw stereo.</span>
+                  </div>
+                  <input type="checkbox" id="setting-raw" onchange="toggleRawMode()" />
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <button id="btn-start-server" onclick="startServer()" class="w-full flex items-center justify-center gap-2 bg-white text-black hover:bg-gray-200 font-semibold py-4 px-6 rounded-full transition-all active:scale-[0.98]">
+            Start Transmission
+          </button>
+        </div>
+
+        <!-- Server Active -->
+        <div id="server-active" class="space-y-6 hidden">
+          <div class="bg-surface border border-border rounded-2xl p-8 text-center flex flex-col items-center shadow-2xl relative overflow-hidden">
+            <!-- Subtle background glow -->
+            <div class="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-32 bg-white/5 rounded-full blur-3xl pointer-events-none"></div>
+            
+            <p class="text-xs text-textMuted mb-3 uppercase tracking-widest font-semibold z-10">Pairing Code</p>
+            <div class="flex items-center justify-center gap-3 z-10 group cursor-pointer" onclick="copyServerId()" title="Click to copy">
+              <code id="server-id-display" class="text-3xl font-mono font-bold text-white tracking-wider">...</code>
+              <i id="copy-icon" class="ph ph-copy text-xl text-textMuted group-hover:text-white transition-colors"></i>
+            </div>
+            
+            <div id="qr-container" class="hidden flex-col items-center justify-center pt-8 z-10">
+              <div id="qrcode" class="p-3 bg-white rounded-xl shadow-lg"></div>
+              <p class="text-[11px] text-textMuted mt-4 uppercase tracking-widest font-semibold">Scan to join</p>
+            </div>
+          </div>
+
+          <div class="flex flex-col items-center justify-center p-6 bg-surface rounded-2xl border border-border">
+            <div class="flex items-center gap-2 mb-6">
+              <div class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
+              <span id="connection-count" class="text-xs font-semibold uppercase tracking-widest text-textMuted">0 Active Peers</span>
+            </div>
+            
+            <!-- Server Visualizer -->
+            <div class="flex items-end justify-center gap-1.5 h-10 w-full">
+              <div class="eq-bar h-2 server-eq"></div>
+              <div class="eq-bar h-2 server-eq"></div>
+              <div class="eq-bar h-2 server-eq"></div>
+              <div class="eq-bar h-2 server-eq"></div>
+              <div class="eq-bar h-2 server-eq"></div>
+            </div>
+          </div>
+
+          <button onclick="stopServer()" class="w-full flex items-center justify-center gap-2 bg-transparent text-textMuted border border-border hover:border-white hover:text-white font-semibold py-4 px-6 rounded-full transition-all active:scale-[0.98]">
+            End Transmission
+          </button>
+        </div>
+      </div>
+
+      <!-- ================= PLAYER VIEW ================= -->
+      <div id="player-container" class="bg-surface border border-border rounded-3xl p-6 md:p-10 shadow-2xl max-w-md mx-auto hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
+        
+        <div class="text-center mb-10">
+          <h2 class="text-3xl font-semibold tracking-tight text-white mb-2">Receiver</h2>
+          <p class="text-sm text-textMuted">Enter a code to tune in.</p>
+        </div>
+
+        <!-- Player Setup -->
+        <div id="player-setup" class="space-y-6 block">
+          <div>
+            <input type="text" id="target-server-id" placeholder="Paste ID here" class="w-full bg-[#050505] border border-border focus:border-white focus:ring-1 focus:ring-white rounded-2xl px-4 py-5 text-white text-center font-mono text-xl outline-none transition-all placeholder:text-[#444]" />
+          </div>
+
+          <button id="btn-connect" onclick="connectPlayer()" class="w-full flex items-center justify-center gap-2 bg-white text-black hover:bg-gray-200 disabled:opacity-50 disabled:hover:bg-white font-semibold py-4 px-6 rounded-full transition-all active:scale-[0.98]">
+            Connect
+          </button>
+
+          <p id="player-error" class="text-center text-red-500 text-sm hidden">Connection failed. Verify ID.</p>
+        </div>
+
+        <!-- Player Active -->
+        <div id="player-active" class="space-y-8 hidden">
+          <div class="text-center flex flex-col items-center">
+            <p class="text-xs text-textMuted mb-2 uppercase tracking-widest font-semibold">Tuned into</p>
+            <code id="connected-id-display" class="text-2xl font-mono text-white mb-8">...</code>
+            
+            <!-- Player Visualizer -->
+            <div class="flex items-end justify-center gap-1.5 h-16 w-full mb-6">
+              <div class="eq-bar h-2 player-eq"></div>
+              <div class="eq-bar h-2 player-eq"></div>
+              <div class="eq-bar h-2 player-eq"></div>
+              <div class="eq-bar h-2 player-eq"></div>
+              <div class="eq-bar h-2 player-eq"></div>
+            </div>
+            
+            <p id="player-status-text" class="text-sm text-gray-300 font-medium">Connecting...</p>
+            
+            <!-- Force Play Button -->
+            <button id="btn-force-play" onclick="forcePlay()" class="hidden mx-auto mt-6 flex items-center justify-center gap-2 bg-white text-black text-sm font-semibold py-2 px-6 rounded-full transition-all active:scale-[0.98] shadow-[0_0_15px_rgba(255,255,255,0.2)]">
+              <i class="ph-fill ph-play"></i> Tap to unmute
+            </button>
+          </div>
+
+          <!-- Volume Control -->
+          <div class="flex items-center gap-4 px-2">
+            <i class="ph ph-speaker-low text-xl text-textMuted"></i>
+            <input type="range" id="volume-slider" min="0" max="1" step="0.01" value="1" />
+            <i class="ph ph-speaker-high text-xl text-textMuted"></i>
+          </div>
+
+          <button onclick="stopPlayer()" class="w-full flex items-center justify-center gap-2 bg-transparent text-textMuted border border-border hover:border-white hover:text-white font-semibold py-4 px-6 rounded-full transition-all active:scale-[0.98]">
+            Disconnect
+          </button>
+        </div>
+
+        <!-- Hidden Audio Elements -->
+        <audio id="remote-audio" autoplay playsinline></audio>
+        <audio id="dummy-audio" loop playsinline src="https://raw.githubusercontent.com/anars/blank-audio/master/10-minutes-of-silence.mp3"></audio>
+      </div>
+
+    </div>
+  </main>
+
+  <script>
+    // ==========================================
+    // GLOBAL STATE
+    // ==========================================
+    let peer = null;
+    let originalStream = null;
+    let transmissionStream = null;
+    
+    let currentMode = 'server';
+    let audioSource = 'mic';
+    let serverId = '';
+    let connectedPeers = [];
+    let wakeLock = null;
+
+    // ==========================================
+    // DOM ELEMENTS
+    // ==========================================
+    const el = {
+      loadingView: document.getElementById('loading-view'),
+      mainApp: document.getElementById('main-app'),
+      
+      tabServer: document.getElementById('tab-server'),
+      tabPlayer: document.getElementById('tab-player'),
+      
+      serverContainer: document.getElementById('server-container'),
+      playerContainer: document.getElementById('player-container'),
+      
+      serverSetup: document.getElementById('server-setup'),
+      serverActive: document.getElementById('server-active'),
+      btnSourceMic: document.getElementById('btn-source-mic'),
+      btnSourceSystem: document.getElementById('btn-source-system'),
+      systemWarning: document.getElementById('system-audio-warning'),
+      btnStartServer: document.getElementById('btn-start-server'),
+      serverIdDisplay: document.getElementById('server-id-display'),
+      serverStatusText: document.getElementById('server-status-text'),
+      connectionCount: document.getElementById('connection-count'),
+      copyIcon: document.getElementById('copy-icon'),
+      serverEqs: document.querySelectorAll('.server-eq'),
+      
+      advancedSettings: document.getElementById('advanced-settings'),
+      settingsChevron: document.getElementById('settings-chevron'),
+      settingEcho: document.getElementById('setting-echo'),
+      settingNoise: document.getElementById('setting-noise'),
+      settingGain: document.getElementById('setting-gain'),
+      settingRaw: document.getElementById('setting-raw'),
+      qrContainer: document.getElementById('qr-container'),
+      qrcode: document.getElementById('qrcode'),
+      
+      playerSetup: document.getElementById('player-setup'),
+      playerActive: document.getElementById('player-active'),
+      targetServerId: document.getElementById('target-server-id'),
+      btnConnect: document.getElementById('btn-connect'),
+      playerError: document.getElementById('player-error'),
+      connectedIdDisplay: document.getElementById('connected-id-display'),
+      playerStatusText: document.getElementById('player-status-text'),
+      btnForcePlay: document.getElementById('btn-force-play'),
+      playerEqs: document.querySelectorAll('.player-eq'),
+      remoteAudio: document.getElementById('remote-audio'),
+      dummyAudio: document.getElementById('dummy-audio'),
+      volumeSlider: document.getElementById('volume-slider')
+    };
+
+    // ==========================================
+    // AUDIO VISUALIZER (REAL-TIME)
+    // ==========================================
+    let audioCtx = null;
+    let analyser = null;
+    let visualizerSource = null;
+    let visualizerAnimationId = null;
+
+    function startVisualizer(stream, type) {
+      const bars = type === 'server' ? el.serverEqs : el.playerEqs;
+      
+      try {
+        if (!audioCtx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          audioCtx = new AudioContext();
+        }
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
+
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 64; 
+        
+        visualizerSource = audioCtx.createMediaStreamSource(stream);
+        visualizerSource.connect(analyser);
+        
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+        function draw() {
+          visualizerAnimationId = requestAnimationFrame(draw);
+          analyser.getByteFrequencyData(dataArray);
+
+          for (let i = 0; i < 5; i++) {
+            const value = dataArray[i * 4]; 
+            const heightPercent = Math.max(15, (value / 255) * 100);
+            bars[i].style.height = `${heightPercent}%`;
+          }
+        }
+        draw();
+      } catch (err) {
+        console.error("Visualizer error:", err);
+      }
+    }
+
+    function stopVisualizer(type) {
+      const bars = type === 'server' ? el.serverEqs : el.playerEqs;
+      
+      if (visualizerAnimationId) {
+        cancelAnimationFrame(visualizerAnimationId);
+      }
+      if (visualizerSource) {
+        visualizerSource.disconnect();
+      }
+      
+      bars.forEach(bar => {
+        bar.style.height = '8px'; 
+      });
+    }
+
+
+    // ==========================================
+    // INITIALIZATION
+    // ==========================================
+    window.addEventListener('load', () => {
+      const checkPeer = setInterval(() => {
+        if (window.Peer) {
+          clearInterval(checkPeer);
+          el.loadingView.classList.add('hidden');
+          el.mainApp.classList.remove('hidden');
+
+          const urlParams = new URLSearchParams(window.location.search);
+          const autoConnectId = urlParams.get('id');
+          
+          if (autoConnectId) {
+            setMode('player');
+            el.targetServerId.value = autoConnectId;
+            window.history.replaceState({}, document.title, window.location.pathname);
+            setTimeout(() => {
+              if(!el.btnConnect.disabled) connectPlayer();
+            }, 300);
+          }
+        }
+      }, 100);
+
+      const lastId = localStorage.getItem('webAudioRelay_lastId');
+      if (lastId) {
+        el.targetServerId.value = lastId;
+      }
+
+      el.targetServerId.addEventListener('input', () => {
+        el.btnConnect.disabled = !el.targetServerId.value.trim();
+      });
+
+      el.targetServerId.addEventListener('keypress', (e) => {
+        if(e.key === 'Enter' && !el.btnConnect.disabled) connectPlayer();
+      });
+
+      el.volumeSlider.addEventListener('input', (e) => {
+        el.remoteAudio.volume = parseFloat(e.target.value);
+      });
+      
+      el.targetServerId.dispatchEvent(new Event('input'));
+    });
+
+    // ==========================================
+    // UI CONTROLS
+    // ==========================================
+    function setMode(mode) {
+      stopServer();
+      stopPlayer();
+      currentMode = mode;
+
+      const activeTabClass = "flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-full font-medium transition-all bg-[#222] text-white shadow-sm text-sm";
+      const inactiveTabClass = "flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-full font-medium transition-all text-textMuted hover:text-white text-sm";
+
+      if (mode === 'server') {
+        el.tabServer.className = activeTabClass;
+        el.tabPlayer.className = inactiveTabClass;
+        el.serverContainer.classList.remove('hidden');
+        el.playerContainer.classList.add('hidden');
+      } else {
+        el.tabPlayer.className = activeTabClass;
+        el.tabServer.className = inactiveTabClass;
+        el.playerContainer.classList.remove('hidden');
+        el.serverContainer.classList.add('hidden');
+      }
+    }
+
+    function setAudioSource(source) {
+      audioSource = source;
+      
+      const activeClass = "flex flex-col items-center justify-center gap-3 p-6 rounded-2xl border transition-all border-white bg-[#111] text-white shadow-[0_0_20px_rgba(255,255,255,0.05)]";
+      const inactiveClass = "flex flex-col items-center justify-center gap-3 p-6 rounded-2xl border transition-all border-border bg-transparent text-textMuted hover:border-[#444] hover:text-gray-300";
+
+      if (source === 'mic') {
+        el.btnSourceMic.className = activeClass;
+        el.btnSourceSystem.className = inactiveClass;
+        el.systemWarning.classList.add('hidden');
+        el.systemWarning.classList.remove('flex');
+      } else {
+        el.btnSourceSystem.className = activeClass;
+        el.btnSourceMic.className = inactiveClass;
+        el.systemWarning.classList.remove('hidden');
+        el.systemWarning.classList.add('flex');
+      }
+    }
+
+    function copyServerId() {
+      if (!serverId) return;
+      const textArea = document.createElement("textarea");
+      textArea.value = serverId;
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        el.copyIcon.className = "ph ph-check text-xl text-white";
+        setTimeout(() => el.copyIcon.className = "ph ph-copy text-xl text-textMuted group-hover:text-white transition-colors", 2000);
+      } catch (err) {
+        console.error('Failed to copy', err);
+      }
+      document.body.removeChild(textArea);
+    }
+
+    function updateConnectionCount() {
+      const c = connectedPeers.length;
+      el.connectionCount.innerText = `${c} Active Peer${c !== 1 ? 's' : ''}`;
+    }
+
+    function toggleSettings() {
+      if (el.advancedSettings.classList.contains('hidden')) {
+        el.advancedSettings.classList.remove('hidden');
+        el.settingsChevron.classList.add('rotate-180');
+      } else {
+        el.advancedSettings.classList.add('hidden');
+        el.settingsChevron.classList.remove('rotate-180');
+      }
+    }
+
+    function toggleRawMode() {
+      const isRaw = el.settingRaw.checked;
+      el.settingEcho.disabled = isRaw;
+      el.settingNoise.disabled = isRaw;
+      el.settingGain.disabled = isRaw;
+      
+      if (isRaw) {
+        el.settingEcho.parentElement.classList.add('opacity-40', 'pointer-events-none');
+        el.settingNoise.parentElement.classList.add('opacity-40', 'pointer-events-none');
+        el.settingGain.parentElement.classList.add('opacity-40', 'pointer-events-none');
+      } else {
+        el.settingEcho.parentElement.classList.remove('opacity-40', 'pointer-events-none');
+        el.settingNoise.parentElement.classList.remove('opacity-40', 'pointer-events-none');
+        el.settingGain.parentElement.classList.remove('opacity-40', 'pointer-events-none');
+      }
+    }
+
+    // ==========================================
+    // SERVER LOGIC
+    // ==========================================
+    async function startServer() {
+      el.btnStartServer.innerHTML = '<i class="ph ph-spinner-gap animate-spin text-lg"></i> Initializing...';
+      el.btnStartServer.disabled = true;
+
+      const isRaw = el.settingRaw.checked;
+      let audioConstraints = {
+        echoCancellation: isRaw ? false : el.settingEcho.checked,
+        noiseSuppression: isRaw ? false : el.settingNoise.checked,
+        autoGainControl: isRaw ? false : el.settingGain.checked,
+      };
+
+      if (isRaw) audioConstraints.channelCount = 2;
+
+      try {
+        if (audioSource === 'system') {
+          originalStream = await navigator.mediaDevices.getDisplayMedia({ 
+            video: true, 
+            audio: audioConstraints 
+          });
+          
+          const audioTracks = originalStream.getAudioTracks();
+          if (audioTracks.length === 0) {
+            originalStream.getTracks().forEach(t => t.stop());
+            throw new Error('No audio track found. Please share audio.');
+          }
+          transmissionStream = new MediaStream([audioTracks[0]]);
+        } else {
+          originalStream = await navigator.mediaDevices.getUserMedia({ 
+            audio: audioConstraints 
+          });
+          transmissionStream = originalStream;
+        }
+
+        peer = new window.Peer(null, { debug: 2 });
+        
+        peer.on('open', (id) => {
+          serverId = id;
+          el.serverIdDisplay.innerText = id;
+          el.serverSetup.classList.add('hidden');
+          el.serverActive.classList.remove('hidden');
+          startVisualizer(transmissionStream, 'server');
+
+          el.qrcode.innerHTML = ""; 
+          const joinUrl = window.location.origin + window.location.pathname + '?id=' + id;
+          new QRCode(el.qrcode, {
+            text: joinUrl,
+            width: 130,
+            height: 130,
+            colorDark : "#000000",
+            colorLight : "#ffffff",
+            correctLevel : QRCode.CorrectLevel.L
+          });
+          el.qrContainer.classList.remove('hidden');
+          el.qrContainer.classList.add('flex');
+        });
+
+        peer.on('call', (call) => {
+          call.answer(transmissionStream);
+          
+          if (!connectedPeers.includes(call.peer)) {
+            connectedPeers.push(call.peer);
+            updateConnectionCount();
+          }
+
+          call.on('close', () => {
+            connectedPeers = connectedPeers.filter(p => p !== call.peer);
+            updateConnectionCount();
+          });
+          
+          call.on('error', (err) => {
+            connectedPeers = connectedPeers.filter(p => p !== call.peer);
+            updateConnectionCount();
+          });
+        });
+
+        peer.on('error', (err) => {
+          alert("Connection Error: " + err.message);
+          stopServer();
+        });
+
+        peer.on('disconnected', () => peer.reconnect());
+
+        if(originalStream.getVideoTracks().length > 0) {
+           originalStream.getVideoTracks()[0].addEventListener('ended', stopServer);
+        }
+
+      } catch (err) {
+        alert(err.message || 'Failed to capture audio.');
+        el.btnStartServer.innerHTML = 'Start Transmission';
+        el.btnStartServer.disabled = false;
+      }
+    }
+
+    function stopServer() {
+      if (originalStream) {
+        originalStream.getTracks().forEach(t => t.stop());
+        originalStream = null;
+        transmissionStream = null;
+      }
+      if (peer) {
+        peer.destroy();
+        peer = null;
+      }
+      serverId = '';
+      connectedPeers = [];
+      updateConnectionCount();
+      
+      el.serverSetup.classList.remove('hidden');
+      el.serverActive.classList.add('hidden');
+      el.btnStartServer.innerHTML = 'Start Transmission';
+      el.btnStartServer.disabled = false;
+      stopVisualizer('server');
+    }
+
+    // ==========================================
+    // PLAYER LOGIC
+    // ==========================================
+    async function requestWakeLock() {
+      if ('wakeLock' in navigator) {
+        try {
+          wakeLock = await navigator.wakeLock.request('screen');
+        } catch (err) {}
+      }
+    }
+
+    function releaseWakeLock() {
+      if (wakeLock !== null) {
+        wakeLock.release().then(() => wakeLock = null);
+      }
+    }
+
+    function setupMediaSession() {
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: 'Live Audio Stream',
+          artist: 'WebAudioRelay',
+          artwork: [
+            { src: 'https://dummyimage.com/512x512/000000/ffffff.png&text=A', sizes: '512x512', type: 'image/png' }
+          ]
+        });
+        
+        navigator.mediaSession.setActionHandler('play', () => forcePlay());
+        navigator.mediaSession.setActionHandler('pause', () => stopPlayer());
+      }
+    }
+
+    function connectPlayer() {
+      const targetId = el.targetServerId.value.trim();
+      if (!targetId) return;
+
+      el.playerError.classList.add('hidden');
+      el.btnConnect.innerHTML = '<i class="ph ph-spinner-gap animate-spin text-lg"></i> Connecting...';
+      el.btnConnect.disabled = true;
+      el.btnForcePlay.classList.add('hidden');
+
+      localStorage.setItem('webAudioRelay_lastId', targetId);
+
+      el.dummyAudio.play().catch(()=>{});
+      el.remoteAudio.play().catch(()=>{});
+      el.remoteAudio.muted = false;
+      
+      setupMediaSession();
+      requestWakeLock();
+
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      const audioCtx = new AudioContext();
+      const dummyStream = audioCtx.createMediaStreamDestination().stream;
+
+      peer = new window.Peer(null, { debug: 2 });
+      
+      peer.on('open', () => {
+        el.playerSetup.classList.add('hidden');
+        el.playerActive.classList.remove('hidden');
+        el.connectedIdDisplay.innerText = targetId;
+        el.playerStatusText.innerText = "Connecting to peer...";
+
+        const call = peer.call(targetId, dummyStream);
+        
+        call.on('stream', (remoteStream) => {
+          el.remoteAudio.srcObject = remoteStream;
+          
+          el.remoteAudio.play()
+            .then(() => {
+              el.playerStatusText.innerText = "Receiving clean audio";
+              startVisualizer(remoteStream, 'player');
+              el.btnForcePlay.classList.add('hidden');
+            })
+            .catch(e => {
+              el.playerStatusText.innerText = "Browser requires interaction.";
+              el.btnForcePlay.classList.remove('hidden');
+            });
+        });
+
+        call.on('close', () => stopPlayer());
+        call.on('error', () => showPlayerError());
+      });
+
+      peer.on('error', () => showPlayerError());
+    }
+
+    function showPlayerError() {
+      stopPlayer();
+      el.playerError.classList.remove('hidden');
+    }
+
+    function forcePlay() {
+      if (el.remoteAudio.srcObject) {
+        el.remoteAudio.play()
+          .then(() => {
+            el.dummyAudio.play().catch(() => {}); 
+            el.playerStatusText.innerText = "Receiving clean audio";
+            if (el.remoteAudio.srcObject) startVisualizer(el.remoteAudio.srcObject, 'player');
+            el.btnForcePlay.classList.add('hidden');
+          })
+          .catch(() => {});
+      } else {
+        el.dummyAudio.play().catch(() => {});
+      }
+    }
+
+    function stopPlayer() {
+      if (el.remoteAudio.srcObject) {
+        el.remoteAudio.pause();
+        el.remoteAudio.srcObject = null;
+      }
+      
+      el.dummyAudio.pause();
+      el.dummyAudio.currentTime = 0;
+
+      if (peer) {
+        peer.destroy();
+        peer = null;
+      }
+      
+      releaseWakeLock();
+      if ('mediaSession' in navigator) navigator.mediaSession.metadata = null;
+
+      el.playerSetup.classList.remove('hidden');
+      el.playerActive.classList.add('hidden');
+      el.btnConnect.innerHTML = 'Connect';
+      el.btnConnect.disabled = false;
+      stopVisualizer('player');
+    }
+  </script>
+</body>
+</html>
