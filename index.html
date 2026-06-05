@@ -778,7 +778,22 @@
 
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       const audioCtx = new AudioContext();
-      const dummyStream = audioCtx.createMediaStreamDestination().stream;
+      const dummyAudioTrack = audioCtx.createMediaStreamDestination().stream.getAudioTracks()[0];
+      
+      // We must append a dummy video track to the player's connection stream.
+      // This forces the WebRTC negotiation to explicitly request and accept a video track
+      // from the server, otherwise the server's video track will be silently dropped.
+      let dummyStream;
+      try {
+        const dummyCanvas = document.createElement('canvas');
+        dummyCanvas.width = 1;
+        dummyCanvas.height = 1;
+        const dummyVideoTrack = dummyCanvas.captureStream(0).getVideoTracks()[0];
+        dummyStream = new MediaStream([dummyAudioTrack, dummyVideoTrack]);
+      } catch (e) {
+        // Fallback for extremely old browsers that don't support captureStream
+        dummyStream = new MediaStream([dummyAudioTrack]);
+      }
 
       peer = new window.Peer(null, { 
         debug: 2,
