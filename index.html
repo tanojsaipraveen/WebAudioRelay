@@ -116,6 +116,21 @@
       max-height: 100vh;
       height: 100vh;
     }
+
+    /* Custom Scrollbar for Peer List */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #333;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #555;
+    }
   </style>
 </head>
 <body class="min-h-screen selection:bg-white selection:text-black pb-12">
@@ -240,12 +255,20 @@
             </div>
           </div>
 
-          <div class="flex flex-col items-center justify-center p-6 bg-surface rounded-2xl border border-border">
-            <div class="flex items-center gap-2 mb-6">
-              <div class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
-              <span id="connection-count" class="text-xs font-semibold uppercase tracking-widest text-textMuted">0 Active Peers</span>
+          <!-- Peer Management & Visualizer -->
+          <div class="flex flex-col items-center justify-center p-6 bg-surface rounded-2xl border border-border w-full">
+            <div class="flex items-center justify-between w-full mb-4">
+              <div class="flex items-center gap-2">
+                <div class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
+                <span id="connection-count" class="text-xs font-semibold uppercase tracking-widest text-textMuted">0 Active Peers</span>
+              </div>
             </div>
             
+            <!-- Dynamic Peer List -->
+            <ul id="peer-list" class="w-full space-y-2 mb-6 max-h-40 overflow-y-auto hidden">
+              <!-- JS Populated -->
+            </ul>
+
             <!-- Server Visualizer -->
             <div class="flex items-end justify-center gap-1.5 h-10 w-full">
               <div class="eq-bar h-2 server-eq"></div>
@@ -272,8 +295,9 @@
 
         <!-- Player Setup -->
         <div id="player-setup" class="space-y-6 block">
-          <div>
-            <input type="text" id="target-server-id" placeholder="Paste ID here" class="w-full bg-[#050505] border border-border focus:border-white focus:ring-1 focus:ring-white rounded-2xl px-4 py-5 text-white text-center font-mono text-xl outline-none transition-all placeholder:text-[#444]" />
+          <div class="space-y-4">
+            <input type="text" id="player-nickname" placeholder="Your Name (Optional)" class="w-full bg-[#050505] border border-border focus:border-white focus:ring-1 focus:ring-white rounded-2xl px-4 py-4 text-white text-center font-medium text-base outline-none transition-all placeholder:text-[#444]" />
+            <input type="text" id="target-server-id" placeholder="Paste Server ID here" class="w-full bg-[#050505] border border-border focus:border-white focus:ring-1 focus:ring-white rounded-2xl px-4 py-5 text-white text-center font-mono text-xl outline-none transition-all placeholder:text-[#444]" />
           </div>
 
           <button id="btn-connect" onclick="connectPlayer()" class="w-full flex items-center justify-center gap-2 bg-white text-black hover:bg-gray-200 disabled:opacity-50 disabled:hover:bg-white font-semibold py-4 px-6 rounded-full transition-all active:scale-[0.98]">
@@ -284,7 +308,7 @@
         </div>
 
         <!-- Player Active -->
-        <div id="player-active" class="space-y-8 hidden">
+        <div id="player-active" class="space-y-6 hidden">
           <div class="text-center flex flex-col items-center w-full">
             <p class="text-xs text-textMuted mb-2 uppercase tracking-widest font-semibold">Tuned into</p>
             <code id="connected-id-display" class="text-2xl font-mono text-white mb-8">...</code>
@@ -297,6 +321,16 @@
               <button onclick="toggleFullscreen()" class="absolute bottom-3 right-3 p-2 bg-black/60 hover:bg-white/20 text-white rounded-lg backdrop-blur-md opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                 <i id="fullscreen-icon" class="ph ph-corners-out text-lg"></i>
               </button>
+            </div>
+
+            <!-- Network Stats Toggle & Display -->
+            <button onclick="toggleStats()" class="text-xs text-textMuted hover:text-white transition-colors mb-4 flex items-center gap-1 mx-auto bg-surfaceHover py-1 px-3 rounded-full border border-border">
+              <i class="ph ph-chart-line-up"></i> Network Stats
+            </button>
+            <div id="stats-container" class="hidden w-full bg-[#111] border border-border rounded-xl p-4 mb-6 text-xs font-mono text-gray-400 grid grid-cols-3 gap-2 text-center shadow-inner">
+              <div><span class="block text-textMuted mb-1 uppercase text-[10px] tracking-wider">Ping</span><span id="stat-ping" class="text-white">-- ms</span></div>
+              <div><span class="block text-textMuted mb-1 uppercase text-[10px] tracking-wider">Bitrate</span><span id="stat-bitrate" class="text-white">-- kbps</span></div>
+              <div><span class="block text-textMuted mb-1 uppercase text-[10px] tracking-wider">P. Loss</span><span id="stat-loss" class="text-white">-- %</span></div>
             </div>
 
             <!-- Player Visualizer -->
@@ -346,8 +380,16 @@
     let currentMode = 'server';
     let audioSource = 'mic';
     let serverId = '';
-    let connectedPeers = [];
     let wakeLock = null;
+
+    // Active Calls Registry { peerId: { call, nickname } }
+    let activeCalls = {}; 
+    let currentCall = null; // Used by player
+
+    // Stats
+    let statsInterval = null;
+    let lastBytesReceived = 0;
+    let lastTimestamp = 0;
 
     // ==========================================
     // DOM ELEMENTS
@@ -371,6 +413,7 @@
       serverIdDisplay: document.getElementById('server-id-display'),
       serverStatusText: document.getElementById('server-status-text'),
       connectionCount: document.getElementById('connection-count'),
+      peerList: document.getElementById('peer-list'),
       copyIcon: document.getElementById('copy-icon'),
       serverEqs: document.querySelectorAll('.server-eq'),
       
@@ -386,6 +429,7 @@
       
       playerSetup: document.getElementById('player-setup'),
       playerActive: document.getElementById('player-active'),
+      playerNickname: document.getElementById('player-nickname'),
       targetServerId: document.getElementById('target-server-id'),
       btnConnect: document.getElementById('btn-connect'),
       playerError: document.getElementById('player-error'),
@@ -396,6 +440,12 @@
       remoteMedia: document.getElementById('remote-media'),
       videoWrapper: document.getElementById('video-wrapper'),
       fullscreenIcon: document.getElementById('fullscreen-icon'),
+      
+      statsContainer: document.getElementById('stats-container'),
+      statPing: document.getElementById('stat-ping'),
+      statBitrate: document.getElementById('stat-bitrate'),
+      statLoss: document.getElementById('stat-loss'),
+
       dummyAudio: document.getElementById('dummy-audio'),
       volumeSlider: document.getElementById('volume-slider')
     };
@@ -420,7 +470,6 @@
           audioCtx.resume();
         }
 
-        // Must extract audio track specifically if dealing with mixed streams
         const audioTracks = stream.getAudioTracks();
         if (audioTracks.length === 0) return;
         
@@ -453,16 +502,73 @@
     function stopVisualizer(type) {
       const bars = type === 'server' ? el.serverEqs : el.playerEqs;
       
-      if (visualizerAnimationId) {
-        cancelAnimationFrame(visualizerAnimationId);
-      }
-      if (visualizerSource) {
-        visualizerSource.disconnect();
-      }
+      if (visualizerAnimationId) cancelAnimationFrame(visualizerAnimationId);
+      if (visualizerSource) visualizerSource.disconnect();
       
-      bars.forEach(bar => {
-        bar.style.height = '8px'; 
-      });
+      bars.forEach(bar => { bar.style.height = '8px'; });
+    }
+
+    // ==========================================
+    // WEBRTC STATS (LATENCY MONITOR)
+    // ==========================================
+    function toggleStats() {
+      el.statsContainer.classList.toggle('hidden');
+    }
+
+    function startStats() {
+      if (statsInterval) clearInterval(statsInterval);
+      if (!currentCall || !currentCall.peerConnection) return;
+
+      lastBytesReceived = 0;
+      lastTimestamp = 0;
+
+      statsInterval = setInterval(async () => {
+        try {
+          const stats = await currentCall.peerConnection.getStats(null);
+          let ping = '--';
+          let bitrate = 0;
+          let packetsLost = 0;
+          let packetsReceived = 0;
+
+          stats.forEach(report => {
+            if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+              // currentRoundTripTime is in seconds
+              if (report.currentRoundTripTime !== undefined) {
+                ping = (report.currentRoundTripTime * 1000).toFixed(0);
+              }
+            }
+            if (report.type === 'inbound-rtp' && (report.kind === 'audio' || report.kind === 'video')) {
+              const bytes = report.bytesReceived;
+              const timestamp = report.timestamp;
+              if (lastTimestamp && bytes > lastBytesReceived) {
+                // Bitrate in kbps
+                const bitrateCalc = (8 * (bytes - lastBytesReceived)) / (timestamp - lastTimestamp);
+                bitrate += bitrateCalc;
+              }
+              lastBytesReceived = bytes;
+              lastTimestamp = timestamp;
+
+              packetsLost += report.packetsLost || 0;
+              packetsReceived += report.packetsReceived || 0;
+            }
+          });
+
+          el.statPing.innerText = ping !== '--' ? `${ping} ms` : '-- ms';
+          el.statBitrate.innerText = `${Math.round(bitrate)} kbps`;
+          
+          const totalPackets = packetsLost + packetsReceived;
+          const lossPercent = totalPackets > 0 ? ((packetsLost / totalPackets) * 100).toFixed(1) : 0;
+          el.statLoss.innerText = `${lossPercent}%`;
+
+        } catch(e) {}
+      }, 1000);
+    }
+
+    function stopStats() {
+      if(statsInterval) clearInterval(statsInterval);
+      el.statPing.innerText = '-- ms';
+      el.statBitrate.innerText = '-- kbps';
+      el.statLoss.innerText = '-- %';
     }
 
 
@@ -491,9 +597,10 @@
       }, 100);
 
       const lastId = localStorage.getItem('webAudioRelay_lastId');
-      if (lastId) {
-        el.targetServerId.value = lastId;
-      }
+      if (lastId) el.targetServerId.value = lastId;
+
+      const savedNick = localStorage.getItem('webAudioRelay_nickname');
+      if (savedNick) el.playerNickname.value = savedNick;
 
       el.targetServerId.addEventListener('input', () => {
         el.btnConnect.disabled = !el.targetServerId.value.trim();
@@ -569,11 +676,6 @@
       document.body.removeChild(textArea);
     }
 
-    function updateConnectionCount() {
-      const c = connectedPeers.length;
-      el.connectionCount.innerText = `${c} Active Peer${c !== 1 ? 's' : ''}`;
-    }
-
     function toggleSettings() {
       if (el.advancedSettings.classList.contains('hidden')) {
         el.advancedSettings.classList.remove('hidden');
@@ -606,19 +708,12 @@
       const video = el.remoteMedia;
       
       if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-        if (wrapper.requestFullscreen) {
-          wrapper.requestFullscreen();
-        } else if (wrapper.webkitRequestFullscreen) {
-          wrapper.webkitRequestFullscreen(); // Safari
-        } else if (video.webkitEnterFullscreen) {
-          video.webkitEnterFullscreen(); // iOS Safari fallback directly on video element
-        }
+        if (wrapper.requestFullscreen) wrapper.requestFullscreen();
+        else if (wrapper.webkitRequestFullscreen) wrapper.webkitRequestFullscreen();
+        else if (video.webkitEnterFullscreen) video.webkitEnterFullscreen();
       } else {
-        if (document.exitFullscreen) {
-          document.exitFullscreen();
-        } else if (document.webkitExitFullscreen) {
-          document.webkitExitFullscreen(); // Safari
-        }
+        if (document.exitFullscreen) document.exitFullscreen();
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
       }
     }
 
@@ -633,9 +728,47 @@
     document.addEventListener('fullscreenchange', updateFullscreenIcon);
     document.addEventListener('webkitfullscreenchange', updateFullscreenIcon);
 
+
     // ==========================================
-    // SERVER LOGIC
+    // SERVER LOGIC (PEER MANAGEMENT)
     // ==========================================
+    function updatePeerListUI() {
+      const peerIds = Object.keys(activeCalls);
+      const c = peerIds.length;
+      el.connectionCount.innerText = `${c} Active Peer${c !== 1 ? 's' : ''}`;
+      
+      el.peerList.innerHTML = '';
+      if (c === 0) {
+        el.peerList.classList.add('hidden');
+        return;
+      }
+      
+      el.peerList.classList.remove('hidden');
+      peerIds.forEach(id => {
+        const peerData = activeCalls[id];
+        const li = document.createElement('li');
+        li.className = "flex items-center justify-between p-3 bg-[#111] rounded-lg border border-border";
+        li.innerHTML = `
+          <div class="flex flex-col overflow-hidden">
+            <span class="text-sm font-medium text-white truncate">${peerData.nickname}</span>
+            <span class="text-[10px] font-mono text-textMuted truncate">${id}</span>
+          </div>
+          <button onclick="kickPeer('${id}')" class="p-2 text-red-500 hover:bg-red-500/10 rounded-md transition-colors" title="Disconnect Peer">
+            <i class="ph-bold ph-x"></i>
+          </button>
+        `;
+        el.peerList.appendChild(li);
+      });
+    }
+
+    window.kickPeer = function(id) {
+      if(activeCalls[id]) {
+        activeCalls[id].call.close();
+        delete activeCalls[id];
+        updatePeerListUI();
+      }
+    }
+
     async function startServer() {
       el.btnStartServer.innerHTML = '<i class="ph ph-spinner-gap animate-spin text-lg"></i> Initializing...';
       el.btnStartServer.disabled = true;
@@ -653,7 +786,7 @@
       try {
         if (audioSource === 'system') {
           originalStream = await navigator.mediaDevices.getDisplayMedia({ 
-            video: true, // Display media requires requesting video natively
+            video: true, 
             audio: audioConstraints 
           });
           
@@ -666,7 +799,6 @@
           if (includeVideo) {
             transmissionStream = originalStream;
           } else {
-            // Strip video track for audio-only transmission
             transmissionStream = new MediaStream([audioTracks[0]]);
           }
 
@@ -684,9 +816,7 @@
             'iceServers': [
               { urls: 'stun:stun.l.google.com:19302' },
               { urls: 'stun:stun1.l.google.com:19302' },
-              { urls: 'stun:stun2.l.google.com:19302' },
-              { urls: 'stun:stun3.l.google.com:19302' },
-              { urls: 'stun:stun4.l.google.com:19302' }
+              { urls: 'stun:stun2.l.google.com:19302' }
             ]
           }
         });
@@ -697,15 +827,14 @@
           el.serverSetup.classList.add('hidden');
           el.serverActive.classList.remove('hidden');
           startVisualizer(transmissionStream, 'server');
+          updatePeerListUI();
 
           el.qrcode.innerHTML = ""; 
           const joinUrl = window.location.origin + window.location.pathname + '?id=' + id;
           new QRCode(el.qrcode, {
             text: joinUrl,
-            width: 130,
-            height: 130,
-            colorDark : "#000000",
-            colorLight : "#ffffff",
+            width: 130, height: 130,
+            colorDark : "#000000", colorLight : "#ffffff",
             correctLevel : QRCode.CorrectLevel.L
           });
           el.qrContainer.classList.remove('hidden');
@@ -715,19 +844,19 @@
         peer.on('call', (call) => {
           call.answer(transmissionStream);
           
-          if (!connectedPeers.includes(call.peer)) {
-            connectedPeers.push(call.peer);
-            updateConnectionCount();
-          }
+          // Register peer
+          const nickname = call.metadata?.nickname || 'Anonymous Listener';
+          activeCalls[call.peer] = { call, nickname };
+          updatePeerListUI();
 
           call.on('close', () => {
-            connectedPeers = connectedPeers.filter(p => p !== call.peer);
-            updateConnectionCount();
+            delete activeCalls[call.peer];
+            updatePeerListUI();
           });
           
           call.on('error', (err) => {
-            connectedPeers = connectedPeers.filter(p => p !== call.peer);
-            updateConnectionCount();
+            delete activeCalls[call.peer];
+            updatePeerListUI();
           });
         });
 
@@ -760,8 +889,8 @@
         peer = null;
       }
       serverId = '';
-      connectedPeers = [];
-      updateConnectionCount();
+      activeCalls = {};
+      updatePeerListUI();
       
       el.serverSetup.classList.remove('hidden');
       el.serverActive.classList.add('hidden');
@@ -770,21 +899,19 @@
       stopVisualizer('server');
     }
 
+
     // ==========================================
     // PLAYER LOGIC
     // ==========================================
     async function requestWakeLock() {
       if ('wakeLock' in navigator) {
-        try {
-          wakeLock = await navigator.wakeLock.request('screen');
-        } catch (err) {}
+        try { wakeLock = await navigator.wakeLock.request('screen'); } 
+        catch (err) {}
       }
     }
 
     function releaseWakeLock() {
-      if (wakeLock !== null) {
-        wakeLock.release().then(() => wakeLock = null);
-      }
+      if (wakeLock !== null) wakeLock.release().then(() => wakeLock = null);
     }
 
     function setupMediaSession() {
@@ -796,7 +923,6 @@
             { src: 'https://dummyimage.com/512x512/000000/ffffff.png&text=A', sizes: '512x512', type: 'image/png' }
           ]
         });
-        
         navigator.mediaSession.setActionHandler('play', () => forcePlay());
         navigator.mediaSession.setActionHandler('pause', () => stopPlayer());
       }
@@ -806,6 +932,8 @@
       const targetId = el.targetServerId.value.trim();
       if (!targetId) return;
 
+      const nickname = el.playerNickname.value.trim() || 'Anonymous Listener';
+
       el.playerError.classList.add('hidden');
       el.btnConnect.innerHTML = '<i class="ph ph-spinner-gap animate-spin text-lg"></i> Connecting...';
       el.btnConnect.disabled = true;
@@ -813,6 +941,7 @@
       el.videoWrapper.classList.add('hidden');
 
       localStorage.setItem('webAudioRelay_lastId', targetId);
+      localStorage.setItem('webAudioRelay_nickname', nickname);
 
       el.dummyAudio.play().catch(()=>{});
       el.remoteMedia.play().catch(()=>{});
@@ -825,18 +954,13 @@
       const audioCtx = new AudioContext();
       const dummyAudioTrack = audioCtx.createMediaStreamDestination().stream.getAudioTracks()[0];
       
-      // We must append a dummy video track to the player's connection stream.
-      // This forces the WebRTC negotiation to explicitly request and accept a video track
-      // from the server, otherwise the server's video track will be silently dropped.
       let dummyStream;
       try {
         const dummyCanvas = document.createElement('canvas');
-        dummyCanvas.width = 1;
-        dummyCanvas.height = 1;
+        dummyCanvas.width = 1; dummyCanvas.height = 1;
         const dummyVideoTrack = dummyCanvas.captureStream(0).getVideoTracks()[0];
         dummyStream = new MediaStream([dummyAudioTrack, dummyVideoTrack]);
       } catch (e) {
-        // Fallback for extremely old browsers that don't support captureStream
         dummyStream = new MediaStream([dummyAudioTrack]);
       }
 
@@ -846,9 +970,7 @@
           'iceServers': [
             { urls: 'stun:stun.l.google.com:19302' },
             { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun2.l.google.com:19302' },
-            { urls: 'stun:stun3.l.google.com:19302' },
-            { urls: 'stun:stun4.l.google.com:19302' }
+            { urls: 'stun:stun2.l.google.com:19302' }
           ]
         }
       });
@@ -859,9 +981,10 @@
         el.connectedIdDisplay.innerText = targetId;
         el.playerStatusText.innerText = "Connecting to peer...";
 
-        const call = peer.call(targetId, dummyStream);
+        // Pass Nickname in metadata
+        currentCall = peer.call(targetId, dummyStream, { metadata: { nickname: nickname } });
         
-        call.on('stream', (remoteStream) => {
+        currentCall.on('stream', (remoteStream) => {
           el.remoteMedia.srcObject = remoteStream;
           
           if (remoteStream.getVideoTracks().length > 0) {
@@ -874,6 +997,7 @@
           el.remoteMedia.play()
             .then(() => {
               startVisualizer(remoteStream, 'player');
+              startStats();
               el.btnForcePlay.classList.add('hidden');
             })
             .catch(e => {
@@ -882,8 +1006,8 @@
             });
         });
 
-        call.on('close', () => stopPlayer());
-        call.on('error', () => showPlayerError());
+        currentCall.on('close', () => stopPlayer());
+        currentCall.on('error', () => showPlayerError());
       });
 
       peer.on('error', () => showPlayerError());
@@ -899,14 +1023,11 @@
         el.remoteMedia.play()
           .then(() => {
             el.dummyAudio.play().catch(() => {}); 
-            
-            if (el.remoteMedia.srcObject.getVideoTracks().length > 0) {
-              el.playerStatusText.innerText = "Receiving audio and video";
-            } else {
-              el.playerStatusText.innerText = "Receiving clean audio";
-            }
+            if (el.remoteMedia.srcObject.getVideoTracks().length > 0) el.playerStatusText.innerText = "Receiving audio and video";
+            else el.playerStatusText.innerText = "Receiving clean audio";
 
             if (el.remoteMedia.srcObject) startVisualizer(el.remoteMedia.srcObject, 'player');
+            startStats();
             el.btnForcePlay.classList.add('hidden');
           })
           .catch(() => {});
@@ -934,7 +1055,9 @@
         peer.destroy();
         peer = null;
       }
+      currentCall = null;
       
+      stopStats();
       releaseWakeLock();
       if ('mediaSession' in navigator) navigator.mediaSession.metadata = null;
 
