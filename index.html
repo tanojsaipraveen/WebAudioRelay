@@ -175,14 +175,18 @@
         <!-- Server Setup -->
         <div id="server-setup" class="space-y-6 block">
           <div>
-            <div class="grid grid-cols-2 gap-4">
-              <button id="btn-source-mic" onclick="setAudioSource('mic')" class="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl border transition-all border-white bg-[#111] text-white shadow-[0_0_20px_rgba(255,255,255,0.05)]">
+            <div class="grid grid-cols-3 gap-3">
+              <button id="btn-source-mic" onclick="setAudioSource('mic')" class="flex flex-col items-center justify-center gap-2 p-4 rounded-2xl border transition-all border-white bg-[#111] text-white shadow-[0_0_20px_rgba(255,255,255,0.05)]">
                 <i class="ph ph-microphone-stage text-2xl"></i>
-                <span class="text-sm font-medium">Microphone</span>
+                <span class="text-[11px] font-semibold tracking-wider uppercase">Mic</span>
               </button>
-              <button id="btn-source-system" onclick="setAudioSource('system')" class="flex flex-col items-center justify-center gap-3 p-6 rounded-2xl border transition-all border-border bg-transparent text-textMuted hover:border-[#444] hover:text-gray-300">
+              <button id="btn-source-system" onclick="setAudioSource('system')" class="flex flex-col items-center justify-center gap-2 p-4 rounded-2xl border transition-all border-border bg-transparent text-textMuted hover:border-[#444] hover:text-gray-300">
                 <i class="ph ph-speaker-hifi text-2xl"></i>
-                <span class="text-sm font-medium">System Audio</span>
+                <span class="text-[11px] font-semibold tracking-wider uppercase">System</span>
+              </button>
+              <button id="btn-source-file" onclick="setAudioSource('file')" class="flex flex-col items-center justify-center gap-2 p-4 rounded-2xl border transition-all border-border bg-transparent text-textMuted hover:border-[#444] hover:text-gray-300">
+                <i class="ph ph-file-audio text-2xl"></i>
+                <span class="text-[11px] font-semibold tracking-wider uppercase">File</span>
               </button>
             </div>
             
@@ -190,6 +194,10 @@
               <i class="ph-fill ph-warning-circle text-base"></i>
               <span>Select "Entire Screen" and check <b>Share audio</b>.</span>
             </p>
+
+            <div id="file-input-wrapper" class="hidden mt-4 p-4 border border-border rounded-2xl bg-[#050505]">
+              <input type="file" id="local-file-input" accept="audio/*,video/*" class="w-full text-sm text-textMuted file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-white file:text-black hover:file:bg-gray-200 transition-colors" />
+            </div>
           </div>
 
           <!-- Video Toggle -->
@@ -255,6 +263,9 @@
             </div>
           </div>
 
+          <!-- Server Native Media Player (Only visible if File is streamed) -->
+          <video id="server-file-player" class="hidden w-full max-h-[30vh] rounded-2xl border border-border bg-black object-contain shadow-2xl" controls playsinline></video>
+
           <!-- Peer Management & Visualizer -->
           <div class="flex flex-col items-center justify-center p-6 bg-surface rounded-2xl border border-border w-full">
             <div class="flex items-center justify-between w-full mb-4">
@@ -300,7 +311,7 @@
             <input type="text" id="target-server-id" placeholder="Paste Server ID here" class="w-full bg-[#050505] border border-border focus:border-white focus:ring-1 focus:ring-white rounded-2xl px-4 py-5 text-white text-center font-mono text-xl outline-none transition-all placeholder:text-[#444]" />
           </div>
 
-          <button id="btn-connect" onclick="connectPlayer()" class="w-full flex items-center justify-center gap-2 bg-white text-black hover:bg-gray-200 disabled:opacity-50 disabled:hover:bg-white font-semibold py-4 px-6 rounded-full transition-all active:scale-[0.98]">
+          <button id="btn-connect" onclick="connectPlayer(false)" class="w-full flex items-center justify-center gap-2 bg-white text-black hover:bg-gray-200 disabled:opacity-50 disabled:hover:bg-white font-semibold py-4 px-6 rounded-full transition-all active:scale-[0.98]">
             Connect
           </button>
 
@@ -308,7 +319,7 @@
         </div>
 
         <!-- Player Active -->
-        <div id="player-active" class="space-y-6 hidden">
+        <div id="player-active" class="space-y-8 hidden">
           <div class="text-center flex flex-col items-center w-full">
             <p class="text-xs text-textMuted mb-2 uppercase tracking-widest font-semibold">Tuned into</p>
             <code id="connected-id-display" class="text-2xl font-mono text-white mb-8">...</code>
@@ -386,6 +397,10 @@
     let activeCalls = {}; 
     let currentCall = null; // Used by player
 
+    // Reconnection State
+    let isIntentionalDisconnect = false;
+    let reconnectTimeout = null;
+
     // Stats
     let statsInterval = null;
     let lastBytesReceived = 0;
@@ -408,6 +423,10 @@
       serverActive: document.getElementById('server-active'),
       btnSourceMic: document.getElementById('btn-source-mic'),
       btnSourceSystem: document.getElementById('btn-source-system'),
+      btnSourceFile: document.getElementById('btn-source-file'),
+      fileInputWrapper: document.getElementById('file-input-wrapper'),
+      localFileInput: document.getElementById('local-file-input'),
+      serverFilePlayer: document.getElementById('server-file-player'),
       systemWarning: document.getElementById('system-audio-warning'),
       btnStartServer: document.getElementById('btn-start-server'),
       serverIdDisplay: document.getElementById('server-id-display'),
@@ -532,7 +551,6 @@
 
           stats.forEach(report => {
             if (report.type === 'candidate-pair' && report.state === 'succeeded') {
-              // currentRoundTripTime is in seconds
               if (report.currentRoundTripTime !== undefined) {
                 ping = (report.currentRoundTripTime * 1000).toFixed(0);
               }
@@ -541,7 +559,6 @@
               const bytes = report.bytesReceived;
               const timestamp = report.timestamp;
               if (lastTimestamp && bytes > lastBytesReceived) {
-                // Bitrate in kbps
                 const bitrateCalc = (8 * (bytes - lastBytesReceived)) / (timestamp - lastTimestamp);
                 bitrate += bitrateCalc;
               }
@@ -590,7 +607,7 @@
             el.targetServerId.value = autoConnectId;
             window.history.replaceState({}, document.title, window.location.pathname);
             setTimeout(() => {
-              if(!el.btnConnect.disabled) connectPlayer();
+              if(!el.btnConnect.disabled) connectPlayer(false);
             }, 300);
           }
         }
@@ -607,7 +624,7 @@
       });
 
       el.targetServerId.addEventListener('keypress', (e) => {
-        if(e.key === 'Enter' && !el.btnConnect.disabled) connectPlayer();
+        if(e.key === 'Enter' && !el.btnConnect.disabled) connectPlayer(false);
       });
 
       el.volumeSlider.addEventListener('input', (e) => {
@@ -644,19 +661,25 @@
     function setAudioSource(source) {
       audioSource = source;
       
-      const activeClass = "flex flex-col items-center justify-center gap-3 p-6 rounded-2xl border transition-all border-white bg-[#111] text-white shadow-[0_0_20px_rgba(255,255,255,0.05)]";
-      const inactiveClass = "flex flex-col items-center justify-center gap-3 p-6 rounded-2xl border transition-all border-border bg-transparent text-textMuted hover:border-[#444] hover:text-gray-300";
+      const activeClass = "flex flex-col items-center justify-center gap-2 p-4 rounded-2xl border transition-all border-white bg-[#111] text-white shadow-[0_0_20px_rgba(255,255,255,0.05)]";
+      const inactiveClass = "flex flex-col items-center justify-center gap-2 p-4 rounded-2xl border transition-all border-border bg-transparent text-textMuted hover:border-[#444] hover:text-gray-300";
 
-      if (source === 'mic') {
-        el.btnSourceMic.className = activeClass;
-        el.btnSourceSystem.className = inactiveClass;
-        el.systemWarning.classList.add('hidden');
-        el.systemWarning.classList.remove('flex');
-      } else {
-        el.btnSourceSystem.className = activeClass;
-        el.btnSourceMic.className = inactiveClass;
+      el.btnSourceMic.className = source === 'mic' ? activeClass : inactiveClass;
+      el.btnSourceSystem.className = source === 'system' ? activeClass : inactiveClass;
+      el.btnSourceFile.className = source === 'file' ? activeClass : inactiveClass;
+
+      if (source === 'system') {
         el.systemWarning.classList.remove('hidden');
         el.systemWarning.classList.add('flex');
+        el.fileInputWrapper.classList.add('hidden');
+      } else if (source === 'file') {
+        el.systemWarning.classList.add('hidden');
+        el.systemWarning.classList.remove('flex');
+        el.fileInputWrapper.classList.remove('hidden');
+      } else {
+        el.systemWarning.classList.add('hidden');
+        el.systemWarning.classList.remove('flex');
+        el.fileInputWrapper.classList.add('hidden');
       }
     }
 
@@ -802,6 +825,31 @@
             transmissionStream = new MediaStream([audioTracks[0]]);
           }
 
+        } else if (audioSource === 'file') {
+          if (!el.localFileInput.files.length) {
+            throw new Error('Please select a media file to stream.');
+          }
+          const file = el.localFileInput.files[0];
+          el.serverFilePlayer.src = URL.createObjectURL(file);
+          
+          // Wait for media to be ready to play before capturing
+          await el.serverFilePlayer.play();
+          el.serverFilePlayer.classList.remove('hidden');
+
+          // Ensure cross-browser capture stream
+          const captureFunc = el.serverFilePlayer.captureStream || el.serverFilePlayer.mozCaptureStream;
+          if (!captureFunc) {
+            throw new Error('File streaming is not supported by your browser.');
+          }
+          
+          originalStream = captureFunc.call(el.serverFilePlayer);
+          
+          if (!includeVideo && originalStream.getVideoTracks().length > 0) {
+            transmissionStream = new MediaStream([originalStream.getAudioTracks()[0]]);
+          } else {
+            transmissionStream = originalStream;
+          }
+
         } else {
           originalStream = await navigator.mediaDevices.getUserMedia({ 
             video: includeVideo,
@@ -867,7 +915,8 @@
 
         peer.on('disconnected', () => peer.reconnect());
 
-        if(originalStream.getVideoTracks().length > 0) {
+        // Stop server if stream tracks natively end (e.g., stop screen share)
+        if(originalStream && originalStream.getVideoTracks().length > 0) {
            originalStream.getVideoTracks()[0].addEventListener('ended', stopServer);
         }
 
@@ -879,11 +928,22 @@
     }
 
     function stopServer() {
-      if (originalStream) {
+      if (originalStream && audioSource !== 'file') {
         originalStream.getTracks().forEach(t => t.stop());
-        originalStream = null;
-        transmissionStream = null;
       }
+      
+      if (audioSource === 'file') {
+        el.serverFilePlayer.pause();
+        el.serverFilePlayer.classList.add('hidden');
+        if (el.serverFilePlayer.src) {
+           URL.revokeObjectURL(el.serverFilePlayer.src);
+           el.serverFilePlayer.src = "";
+        }
+      }
+
+      originalStream = null;
+      transmissionStream = null;
+      
       if (peer) {
         peer.destroy();
         peer = null;
@@ -928,14 +988,22 @@
       }
     }
 
-    function connectPlayer() {
+    function connectPlayer(isReconnecting = false) {
       const targetId = el.targetServerId.value.trim();
       if (!targetId) return;
 
       const nickname = el.playerNickname.value.trim() || 'Anonymous Listener';
+      
+      isIntentionalDisconnect = false;
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
 
       el.playerError.classList.add('hidden');
-      el.btnConnect.innerHTML = '<i class="ph ph-spinner-gap animate-spin text-lg"></i> Connecting...';
+      if (isReconnecting) {
+        el.btnConnect.innerHTML = '<i class="ph ph-spinner-gap animate-spin text-lg"></i> Reconnecting...';
+      } else {
+        el.btnConnect.innerHTML = '<i class="ph ph-spinner-gap animate-spin text-lg"></i> Connecting...';
+      }
+      
       el.btnConnect.disabled = true;
       el.btnForcePlay.classList.add('hidden');
       el.videoWrapper.classList.add('hidden');
@@ -979,9 +1047,8 @@
         el.playerSetup.classList.add('hidden');
         el.playerActive.classList.remove('hidden');
         el.connectedIdDisplay.innerText = targetId;
-        el.playerStatusText.innerText = "Connecting to peer...";
+        el.playerStatusText.innerText = isReconnecting ? "Reconnecting to peer..." : "Connecting to peer...";
 
-        // Pass Nickname in metadata
         currentCall = peer.call(targetId, dummyStream, { metadata: { nickname: nickname } });
         
         currentCall.on('stream', (remoteStream) => {
@@ -1006,11 +1073,44 @@
             });
         });
 
-        currentCall.on('close', () => stopPlayer());
-        currentCall.on('error', () => showPlayerError());
+        currentCall.on('close', () => {
+           if (!isIntentionalDisconnect) triggerReconnect();
+           else stopPlayer();
+        });
+        currentCall.on('error', () => {
+           if (!isIntentionalDisconnect) triggerReconnect();
+           else showPlayerError();
+        });
       });
 
-      peer.on('error', () => showPlayerError());
+      peer.on('disconnected', () => {
+        if (!isIntentionalDisconnect) triggerReconnect();
+      });
+
+      peer.on('error', (err) => {
+        if (!isIntentionalDisconnect && (err.type === 'peer-unavailable' || err.type === 'network')) {
+           triggerReconnect();
+        } else {
+           showPlayerError();
+        }
+      });
+    }
+
+    function triggerReconnect() {
+      if (isIntentionalDisconnect) return;
+      
+      // Clean up previous attempts quietly
+      if (currentCall) { currentCall.close(); currentCall = null; }
+      if (peer) { peer.destroy(); peer = null; }
+      
+      el.playerStatusText.innerText = "Connection lost. Reconnecting in 3s...";
+      el.videoWrapper.classList.add('hidden');
+      stopVisualizer('player');
+      stopStats();
+
+      reconnectTimeout = setTimeout(() => {
+        if(!isIntentionalDisconnect) connectPlayer(true);
+      }, 3000);
     }
 
     function showPlayerError() {
@@ -1037,6 +1137,9 @@
     }
 
     function stopPlayer() {
+      isIntentionalDisconnect = true;
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+
       if (el.remoteMedia.srcObject) {
         el.remoteMedia.pause();
         el.remoteMedia.srcObject = null;
