@@ -603,7 +603,18 @@
           transmissionStream = originalStream;
         }
 
-        peer = new window.Peer(null, { debug: 2 });
+        peer = new window.Peer(null, { 
+          debug: 2,
+          config: {
+            'iceServers': [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' },
+              { urls: 'stun:stun2.l.google.com:19302' },
+              { urls: 'stun:stun3.l.google.com:19302' },
+              { urls: 'stun:stun4.l.google.com:19302' }
+            ]
+          }
+        });
         
         peer.on('open', (id) => {
           serverId = id;
@@ -738,7 +749,18 @@
       const audioCtx = new AudioContext();
       const dummyStream = audioCtx.createMediaStreamDestination().stream;
 
-      peer = new window.Peer(null, { debug: 2 });
+      peer = new window.Peer(null, { 
+        debug: 2,
+        config: {
+          'iceServers': [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:stun3.l.google.com:19302' },
+            { urls: 'stun:stun4.l.google.com:19302' }
+          ]
+        }
+      });
       
       peer.on('open', () => {
         el.playerSetup.classList.add('hidden');
