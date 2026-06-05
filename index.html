@@ -834,21 +834,37 @@
           
           // Wait for media to be ready to play before capturing
           await el.serverFilePlayer.play();
-          el.serverFilePlayer.classList.remove('hidden');
+          
+          // Fix: Route audio through WebAudio API to fix WebRTC transmission and mute local server output
+          if (!el.serverFilePlayer.audioSourceNode) {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            el.serverFilePlayer.audioCtx = ctx;
+            el.serverFilePlayer.audioSourceNode = ctx.createMediaElementSource(el.serverFilePlayer);
+            el.serverFilePlayer.audioDestNode = ctx.createMediaStreamDestination();
+            el.serverFilePlayer.audioSourceNode.connect(el.serverFilePlayer.audioDestNode);
+            // Note: Purposely NOT connected to ctx.destination to mute it on the server
+          }
+          if (el.serverFilePlayer.audioCtx.state === 'suspended') {
+            el.serverFilePlayer.audioCtx.resume();
+          }
 
-          // Ensure cross-browser capture stream
-          const captureFunc = el.serverFilePlayer.captureStream || el.serverFilePlayer.mozCaptureStream;
-          if (!captureFunc) {
-            throw new Error('File streaming is not supported by your browser.');
-          }
-          
-          originalStream = captureFunc.call(el.serverFilePlayer);
-          
-          if (!includeVideo && originalStream.getVideoTracks().length > 0) {
-            transmissionStream = new MediaStream([originalStream.getAudioTracks()[0]]);
+          let tracks = [];
+          const audioTrack = el.serverFilePlayer.audioDestNode.stream.getAudioTracks()[0];
+          if (audioTrack) tracks.push(audioTrack);
+
+          if (includeVideo) {
+            el.serverFilePlayer.classList.remove('hidden');
+            const captureFunc = el.serverFilePlayer.captureStream || el.serverFilePlayer.mozCaptureStream;
+            if (captureFunc) {
+              const capStream = captureFunc.call(el.serverFilePlayer);
+              const vTracks = capStream.getVideoTracks();
+              if (vTracks.length > 0) tracks.push(vTracks[0]);
+            }
           } else {
-            transmissionStream = originalStream;
+             el.serverFilePlayer.classList.add('hidden');
           }
+
+          transmissionStream = new MediaStream(tracks);
 
         } else {
           originalStream = await navigator.mediaDevices.getUserMedia({ 
