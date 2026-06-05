@@ -109,6 +109,13 @@
     }
     
     .hidden { display: none !important; }
+
+    /* Fullscreen Video Fixes */
+    #video-wrapper:fullscreen video,
+    #video-wrapper:-webkit-full-screen video {
+      max-height: 100vh;
+      height: 100vh;
+    }
   </style>
 </head>
 <body class="min-h-screen selection:bg-white selection:text-black pb-12">
@@ -283,8 +290,13 @@
             <code id="connected-id-display" class="text-2xl font-mono text-white mb-8">...</code>
             
             <!-- Video Container (Hidden if audio only) -->
-            <div id="video-wrapper" class="hidden mb-6 w-full rounded-2xl overflow-hidden border border-border shadow-2xl bg-black relative">
+            <div id="video-wrapper" class="hidden mb-6 w-full rounded-2xl overflow-hidden border border-border shadow-2xl bg-black relative group">
               <video id="remote-media" autoplay playsinline class="w-full h-auto max-h-[40vh] object-contain"></video>
+              
+              <!-- Fullscreen button overlay -->
+              <button onclick="toggleFullscreen()" class="absolute bottom-3 right-3 p-2 bg-black/60 hover:bg-white/20 text-white rounded-lg backdrop-blur-md opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                <i id="fullscreen-icon" class="ph ph-corners-out text-lg"></i>
+              </button>
             </div>
 
             <!-- Player Visualizer -->
@@ -383,6 +395,7 @@
       playerEqs: document.querySelectorAll('.player-eq'),
       remoteMedia: document.getElementById('remote-media'),
       videoWrapper: document.getElementById('video-wrapper'),
+      fullscreenIcon: document.getElementById('fullscreen-icon'),
       dummyAudio: document.getElementById('dummy-audio'),
       volumeSlider: document.getElementById('volume-slider')
     };
@@ -498,7 +511,7 @@
     });
 
     // ==========================================
-    // UI CONTROLS
+    // UI CONTROLS & FULLSCREEN
     // ==========================================
     function setMode(mode) {
       stopServer();
@@ -587,6 +600,38 @@
         el.settingGain.parentElement.classList.remove('opacity-40', 'pointer-events-none');
       }
     }
+
+    function toggleFullscreen() {
+      const wrapper = el.videoWrapper;
+      const video = el.remoteMedia;
+      
+      if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+        if (wrapper.requestFullscreen) {
+          wrapper.requestFullscreen();
+        } else if (wrapper.webkitRequestFullscreen) {
+          wrapper.webkitRequestFullscreen(); // Safari
+        } else if (video.webkitEnterFullscreen) {
+          video.webkitEnterFullscreen(); // iOS Safari fallback directly on video element
+        }
+      } else {
+        if (document.exitFullscreen) {
+          document.exitFullscreen();
+        } else if (document.webkitExitFullscreen) {
+          document.webkitExitFullscreen(); // Safari
+        }
+      }
+    }
+
+    function updateFullscreenIcon() {
+      if (document.fullscreenElement || document.webkitFullscreenElement) {
+        el.fullscreenIcon.classList.replace('ph-corners-out', 'ph-corners-in');
+      } else {
+        el.fullscreenIcon.classList.replace('ph-corners-in', 'ph-corners-out');
+      }
+    }
+
+    document.addEventListener('fullscreenchange', updateFullscreenIcon);
+    document.addEventListener('webkitfullscreenchange', updateFullscreenIcon);
 
     // ==========================================
     // SERVER LOGIC
@@ -876,6 +921,11 @@
         el.remoteMedia.srcObject = null;
       }
       
+      if (document.fullscreenElement || document.webkitFullscreenElement) {
+        if (document.exitFullscreen) document.exitFullscreen();
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+      }
+
       el.dummyAudio.pause();
       el.dummyAudio.currentTime = 0;
       el.videoWrapper.classList.add('hidden');
